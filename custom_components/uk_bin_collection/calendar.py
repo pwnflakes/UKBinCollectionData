@@ -128,7 +128,7 @@ async def async_setup_entry(
     ]
 
     # Wait for the first refresh. This will raise if the update fails.
-    await coordinator.async_config_entry_first_refresh()
+    #await coordinator.async_config_entry_first_refresh()
 
     # Create calendar entities only for bin types that have a valid date
     entities = []
