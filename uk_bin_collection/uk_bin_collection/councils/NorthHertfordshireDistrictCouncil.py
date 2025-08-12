@@ -1,4 +1,4 @@
-# File: NHDC.py (Revised with Debugging and Robustness)
+# File: NHDC.py (Revised with Enhanced Wait Condition)
 
 import re
 import time
@@ -30,15 +30,15 @@ class CouncilClass(AbstractGetBinDataClass):
             headless = kwargs.get("headless")
             url = "https://waste.nc.north-herts.gov.uk/w/webpage/find-bin-collection-day-input-address"
             
-            # ADDING A STANDARD USER-AGENT: This can help avoid being blocked
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
-            driver = create_webdriver(web_driver, headless, user_agent=user_agent)
+            driver = create_webdriver(web_driver=web_driver, headless=headless, user_agent=user_agent)
             driver.get(url)
 
-            wait = WebDriverWait(driver, 20)
+            wait = WebDriverWait(driver, 30) # Increased wait time slightly for safety
             wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
+            # --- Selenium navigation ---
             postcode_input = wait.until(
                 EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, "input.relation_path_type_ahead_search.form-control")
@@ -59,13 +59,20 @@ class CouncilClass(AbstractGetBinDataClass):
             )
             continue_button.click()
 
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing_template_record")))
-            time.sleep(3) 
+            # --- NEW ROBUST WAIT CONDITION ---
+            # Instead of just waiting for the container, we now wait for the container
+            # AND for it to contain the text "Next collection". This ensures the JS has finished rendering.
+            wait.until(EC.text_to_be_present_in_element(
+                (By.CSS_SELECTOR, "div.listing_template_record"), "Next collection"
+            ))
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
             
             collections = set()
             bin_records = soup.select("div.listing_template_record")
+            
+            # Diagnostic print to show in logs how many records were found
+            print(f"Found {len(bin_records)} bin records to process.")
 
             for record in bin_records:
                 try:
@@ -90,27 +97,11 @@ class CouncilClass(AbstractGetBinDataClass):
                     collection_date = datetime.strptime(date_text_cleaned, "%A %d %B %Y")
                     
                     collections.add((bin_type, collection_date))
-
                 except Exception:
                     continue
             
-            # --- START OF NEW DEBUGGING BLOCK ---
             if not collections:
-                # If we get here, something went wrong. Save the page for debugging.
-                # In Home Assistant, this will save to the /config/ directory.
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                screenshot_path = f"nhdc_error_{timestamp}.png"
-                html_path = f"nhdc_error_{timestamp}.html"
-                
-                print(f"No bin data found. Saving screenshot to {screenshot_path} and HTML to {html_path}")
-                
-                if driver:
-                    driver.save_screenshot(screenshot_path)
-                    with open(html_path, "w", encoding="utf-8") as f:
-                        f.write(driver.page_source)
-                
                 raise ValueError("No bin collection data could be extracted from the page")
-            # --- END OF NEW DEBUGGING BLOCK ---
 
             for bin_type, collection_date in collections:
                  data["bins"].append({
