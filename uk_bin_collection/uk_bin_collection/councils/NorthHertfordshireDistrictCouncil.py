@@ -31,14 +31,13 @@ class CouncilClass(AbstractGetBinDataClass):
             headless = kwargs.get("headless")
             url = "https://waste.nc.north-herts.gov.uk/w/webpage/find-bin-collection-day-input-address"
 
-            driver = create_webdriver(web_driver, headless, None, __name__)
+            driver = create_webdriver(web_driver, headless) # Removed unused args for clarity
             driver.get(url)
 
-            # Wait for page to load
             wait = WebDriverWait(driver, 20)
             wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-            # Enter postcode
+            # --- Selenium navigation (remains the same) ---
             postcode_input = wait.until(
                 EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, "input.relation_path_type_ahead_search.form-control")
@@ -47,51 +46,43 @@ class CouncilClass(AbstractGetBinDataClass):
             postcode_input.clear()
             postcode_input.send_keys(postcode)
 
-            # Wait for address dropdown and select address
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".relation_path_type_ahead_results_holder li")))
+            
             address_xpath = f"//li[@aria-label and contains(@aria-label, '{user_paon}')]"
             matching_address = wait.until(EC.element_to_be_clickable((By.XPATH, address_xpath)))
             matching_address.click()
-            time.sleep(2)  # Allow selection to register
+            time.sleep(2)
 
-            # Click the 'continue' button
             continue_button = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input.btn.bg-green[value='Select address and continue']"))
             )
             continue_button.click()
 
-            # Wait for the results page to load. Wait for at least one record to be present.
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing_template_record")))
-            # Add a small buffer for any final JS rendering
-            time.sleep(3)
+            # --- Start of Robust Parsing Logic ---
 
-            # Create BeautifulSoup object
+            # Wait for any of the bin records to appear on the page.
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing_template_record")))
+            time.sleep(3) # Extra buffer for any JS rendering
+
             soup = BeautifulSoup(driver.page_source, "html.parser")
             
-            # The page has two sections with identical data (for desktop and mobile views).
-            # We only need to parse one. We target the desktop listing widget first.
-            listing_widget = soup.find("div", {"data-widget_identifier": "listing_template_689307fd89e25"})
-            if not listing_widget:
-                # Fallback to the mobile view if the desktop one isn't found
-                listing_widget = soup.find("div", {"data-widget_identifier": "listing_template_6893125e31f59"})
+            # Use a set to automatically handle duplicate entries from mobile/desktop views
+            collections = set()
 
-            if not listing_widget:
-                # If neither widget is found, something is wrong with the page load.
-                raise ValueError("Could not find the bin collection listing widget on the page.")
-
-            # Find all bin records within the selected widget
-            bin_records = listing_widget.select("div.listing_template_record")
+            # Find ALL bin records on the page. The class "listing_template_record" is
+            # a much more stable selector than a data-widget_identifier with a random ID.
+            bin_records = soup.select("div.listing_template_record")
 
             for record in bin_records:
                 try:
-                    # Extract bin type.
+                    # The internal selectors are already quite robust as they rely on table structure
                     bin_type_element = record.select_one("td:first-child p span strong span")
                     if not bin_type_element:
                         continue
                     bin_type = bin_type_element.get_text(strip=True)
 
-                    # Find the paragraph containing "Next collection" and extract the date
                     date_text = None
+                    # Find the paragraph containing the "Next collection" text
                     p_tags = record.select("p")
                     for p_tag in p_tags:
                         if "Next collection" in p_tag.get_text():
@@ -108,20 +99,24 @@ class CouncilClass(AbstractGetBinDataClass):
                     date_text_cleaned = remove_ordinal_indicator_from_date_string(date_text)
                     collection_date = datetime.strptime(date_text_cleaned, "%A %d %B %Y")
                     
-                    # Add to the list of bins
-                    data["bins"].append({
-                        "type": bin_type,
-                        "collectionDate": collection_date.strftime(date_format),
-                    })
+                    # Add the parsed data tuple to the set. Duplicates will be ignored.
+                    collections.add((bin_type, collection_date))
 
                 except Exception:
-                    # Ignore records that don't parse correctly, but allow the loop to continue.
+                    # If one record fails to parse, skip it and continue with the others
                     continue
             
-            if not data["bins"]:
+            if not collections:
                 raise ValueError("No bin collection data could be extracted from the page")
 
-            # Sort the bin collections by date
+            # Convert the set of unique collections into the required dictionary format
+            for bin_type, collection_date in collections:
+                 data["bins"].append({
+                    "type": bin_type,
+                    "collectionDate": collection_date.strftime(date_format),
+                })
+
+            # Sort the final list by date
             data["bins"].sort(
                 key=lambda x: datetime.strptime(x.get("collectionDate"), date_format)
             )
@@ -129,8 +124,8 @@ class CouncilClass(AbstractGetBinDataClass):
             return data
 
         except Exception as e:
-            # Re-raise any exception caught during the process
             raise
         finally:
             if driver:
+                print("Closing webdriver.")
                 driver.quit()
