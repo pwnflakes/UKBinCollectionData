@@ -60,55 +60,63 @@ class CouncilClass(AbstractGetBinDataClass):
             )
             continue_button.click()
 
-            # Wait for the results page to load
+            # Wait for the results page to load. Wait for at least one record to be present.
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing_template_record")))
+            # Add a small buffer for any final JS rendering
+            time.sleep(3)
 
-            # --- Start of corrected parsing logic ---
+            # Create BeautifulSoup object
             soup = BeautifulSoup(driver.page_source, "html.parser")
             
-            # Using a set to avoid duplicates from desktop/mobile views
-            collections = set()
+            # The page has two sections with identical data (for desktop and mobile views).
+            # We only need to parse one. We target the desktop listing widget first.
+            listing_widget = soup.find("div", {"data-widget_identifier": "listing_template_689307fd89e25"})
+            if not listing_widget:
+                # Fallback to the mobile view if the desktop one isn't found
+                listing_widget = soup.find("div", {"data-widget_identifier": "listing_template_6893125e31f59"})
 
-            # Find all bin records on the page
-            bin_records = soup.select("div.listing_template_record")
+            if not listing_widget:
+                # If neither widget is found, something is wrong with the page load.
+                raise ValueError("Could not find the bin collection listing widget on the page.")
+
+            # Find all bin records within the selected widget
+            bin_records = listing_widget.select("div.listing_template_record")
 
             for record in bin_records:
                 try:
-                    # Extract bin type from the first row of the table
-                    bin_type_element = record.select_one("table td p strong span")
+                    # Extract bin type.
+                    bin_type_element = record.select_one("td:first-child p span strong span")
                     if not bin_type_element:
                         continue
                     bin_type = bin_type_element.get_text(strip=True)
 
-                    # Find the paragraph containing "Next collection"
-                    date_p_tag = record.find("p", string=re.compile(r"Next collection"))
-                    if not date_p_tag:
-                        continue
+                    # Find the paragraph containing "Next collection" and extract the date
+                    date_text = None
+                    p_tags = record.select("p")
+                    for p_tag in p_tags:
+                        if "Next collection" in p_tag.get_text():
+                            # The date text is the sibling immediately following the <br> tag
+                            br_tag = p_tag.find("br")
+                            if br_tag and br_tag.next_sibling:
+                                date_text = str(br_tag.next_sibling).strip()
+                                break
                     
-                    # The date is the text immediately following the <br> tag
-                    br_tag = date_p_tag.find("br")
-                    if not br_tag or not br_tag.next_sibling:
+                    if not date_text:
                         continue
-                    
-                    date_text = str(br_tag.next_sibling).strip()
                     
                     # Clean and parse the date
-                    date_text = remove_ordinal_indicator_from_date_string(date_text)
-                    collection_date = datetime.strptime(date_text, "%A %d %B %Y")
+                    date_text_cleaned = remove_ordinal_indicator_from_date_string(date_text)
+                    collection_date = datetime.strptime(date_text_cleaned, "%A %d %B %Y")
                     
-                    # Add to our set of collections to handle duplicates
-                    collections.add((bin_type, collection_date))
+                    # Add to the list of bins
+                    data["bins"].append({
+                        "type": bin_type,
+                        "collectionDate": collection_date.strftime(date_format),
+                    })
 
                 except Exception:
-                    # Ignore records that don't parse correctly and continue
+                    # Ignore records that don't parse correctly, but allow the loop to continue.
                     continue
-            
-            # Convert the set of collections into the required dictionary format
-            for bin_type, collection_date in collections:
-                data["bins"].append({
-                    "type": bin_type,
-                    "collectionDate": collection_date.strftime(date_format),
-                })
             
             if not data["bins"]:
                 raise ValueError("No bin collection data could be extracted from the page")
@@ -119,10 +127,9 @@ class CouncilClass(AbstractGetBinDataClass):
             )
 
             return data
-            # --- End of corrected parsing logic ---
 
         except Exception as e:
-            # Add logging here if needed, then re-raise
+            # Re-raise any exception caught during the process
             raise
         finally:
             if driver:
