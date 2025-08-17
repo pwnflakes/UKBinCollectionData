@@ -1,4 +1,4 @@
-# File: NHDC.py (Final Race-Condition-Proof Version)
+# File: NHDC.py (Final Sledgehammer Version)
 
 import re
 import time
@@ -30,8 +30,6 @@ class CouncilClass(AbstractGetBinDataClass):
             headless = kwargs.get("headless")
             url = "https://waste.nc.north-herts.gov.uk/w/webpage/find-bin-collection-day-input-address"
             
-            # NOTE: The User Agent is likely being ignored by the HA framework, but we leave it here.
-            # The root cause is a race condition, not the user agent.
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
             driver = create_webdriver(web_driver=web_driver, headless=headless, user_agent=user_agent)
@@ -62,13 +60,12 @@ class CouncilClass(AbstractGetBinDataClass):
             )
             continue_button.click()
 
-            # --- NEW, MORE SPECIFIC WAIT CONDITION ---
-            # This is the crucial fix. We are now waiting for an element DEEP inside the container.
-            # This ensures that the JavaScript has finished rendering the entire table structure
-            # before we try to grab the page source, thus solving the race condition.
-            wait.until(EC.presence_of_element_located(
-                (By.CSS_SELECTOR, "div.listing_template_record td:first-child strong")
-            ))
+            # --- BRUTE FORCE TIMING FIX ---
+            # Wait for the container to appear, then add a hard sleep.
+            # This solves stubborn, environment-specific race conditions where JS may still be
+            # manipulating the DOM after the wait condition is met.
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.listing_template_record")))
+            time.sleep(3)
             # --- END OF FIX ---
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
@@ -78,15 +75,18 @@ class CouncilClass(AbstractGetBinDataClass):
 
             for record in bin_records:
                 try:
-                    first_td = record.find("td")
-                    if not first_td:
-                        continue
+                    # Find all <strong> tags within the record.
+                    strong_tags = record.select("td:first-child strong")
+                    bin_type = ""
+                    for tag in strong_tags:
+                        text = tag.get_text(strip=True)
+                        # The bin type is the one that doesn't contain these keywords
+                        if "collection" not in text.lower() and "cycle" not in text.lower() and "bin" not in text.lower() and "caddy" not in text.lower():
+                            bin_type = text
+                            break
                     
-                    bin_type_element = first_td.find("strong")
-
-                    if not bin_type_element:
+                    if not bin_type:
                         continue
-                    bin_type = bin_type_element.get_text(strip=True)
 
                     date_text = None
                     p_tags = record.select("p")
@@ -108,8 +108,7 @@ class CouncilClass(AbstractGetBinDataClass):
                     continue
             
             if not collections:
-                # This block should now hopefully never be reached.
-                raise ValueError("No bin collection data could be extracted from the page")
+                raise ValueError("No bin collection data could be extracted after parsing")
 
             for bin_type, collection_date in collections:
                  data["bins"].append({
@@ -124,8 +123,6 @@ class CouncilClass(AbstractGetBinDataClass):
             return data
 
         except Exception as e:
-            # Removed the debugging file dump as it's no longer needed for this issue.
-            # You can add it back if you wish.
             raise
         finally:
             if driver:
