@@ -1,4 +1,4 @@
-# File: NHDC.py (Final Bulletproof Version)
+# File: NHDC.py (Final Workaround Version)
 
 import re
 import time
@@ -18,7 +18,7 @@ from uk_bin_collection.uk_bin_collection.common import (
 from uk_bin_collection.uk_bin_collection.get_bin_data import AbstractGetBinDataClass
 
 
-class CouncilClass(AbstractGetBinDataClass):
+class CouncilClass(AbstractGetBinData-Class):
     def parse_data(self, page: str, **kwargs) -> dict:
         driver = None
         try:
@@ -33,6 +33,15 @@ class CouncilClass(AbstractGetBinDataClass):
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
             driver = create_webdriver(web_driver=web_driver, headless=headless, user_agent=user_agent)
+
+            # --- NEW CRITICAL WORKAROUND ---
+            # Force-set the User-Agent using the Chrome DevTools Protocol.
+            # This bypasses the Home Assistant framework ignoring the user_agent argument.
+            driver.execute_cdp_cmd(
+                "Network.setUserAgentOverride", {"userAgent": user_agent}
+            )
+            # --- END OF WORKAROUND ---
+            
             driver.get(url)
 
             wait = WebDriverWait(driver, 30)
@@ -71,15 +80,12 @@ class CouncilClass(AbstractGetBinDataClass):
 
             for record in bin_records:
                 try:
-                    # --- THIS IS THE FINAL, CORRECTED SELECTOR ---
-                    # It targets the unique feature of the bin type: the span with a specific font-family.
-                    # This works for both mobile and desktop layouts and cannot match any other element.
+                    # Using the robust selector from the previous attempt
                     first_td = record.find("td")
                     if not first_td:
                         continue
                     
                     bin_type_element = first_td.find("strong")
-                    # --- END OF CORRECTION ---
 
                     if not bin_type_element:
                         continue
@@ -100,8 +106,6 @@ class CouncilClass(AbstractGetBinDataClass):
                     date_text_cleaned = remove_ordinal_indicator_from_date_string(date_text)
                     collection_date = datetime.strptime(date_text_cleaned, "%A %d %B %Y")
                     
-                    # Using a tuple in the set ensures we don't add duplicate bin types
-                    # if they appear in both mobile and desktop views in the source.
                     collections.add((bin_type, collection_date))
                 except Exception:
                     continue
