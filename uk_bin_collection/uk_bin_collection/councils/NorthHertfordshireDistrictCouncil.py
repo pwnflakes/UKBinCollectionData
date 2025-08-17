@@ -36,6 +36,7 @@ class CouncilClass(AbstractGetBinDataClass):
             wait = WebDriverWait(driver, 30)
             wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
+            # --- Selenium navigation ---
             postcode_input = wait.until(
                 EC.element_to_be_clickable(
                     (By.CSS_SELECTOR, "input.relation_path_type_ahead_search.form-control")
@@ -68,14 +69,16 @@ class CouncilClass(AbstractGetBinDataClass):
 
             for record in bin_records:
                 try:
-                    bin_type_element = record.find("p")
+                    # --- THIS IS THE CORRECTED LINE ---
+                    # This selector is designed to be universal. It finds the bin type in both the
+                    # desktop and mobile HTML layouts by looking for the unique style signature,
+                    # and correctly ignores the bin color name.
+                    bin_type_element = record.select_one('p span[style*="font-size: 18pt"]')
+                    # --- END OF CORRECTION ---
 
                     if not bin_type_element:
                         continue
                     bin_type = bin_type_element.get_text(strip=True)
-
-                    if "bin" in bin_type.lower() or "caddy" in bin_type.lower():
-                        continue
 
                     date_text = None
                     p_tags = record.select("p")
