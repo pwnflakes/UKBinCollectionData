@@ -1,5 +1,3 @@
-# File: NHDC.py (Revised with Enhanced Wait Condition)
-
 import re
 import time
 from datetime import datetime
@@ -35,7 +33,10 @@ class CouncilClass(AbstractGetBinDataClass):
             driver = create_webdriver(web_driver=web_driver, headless=headless, user_agent=user_agent)
             driver.get(url)
 
-            wait = WebDriverWait(driver, 30) # Increased wait time slightly for safety
+            # Use a generous 30-second timeout for all wait operations
+            wait = WebDriverWait(driver, 30)
+            
+            # Wait for page to be fully interactive
             wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
             # --- Selenium navigation ---
@@ -47,21 +48,26 @@ class CouncilClass(AbstractGetBinDataClass):
             postcode_input.clear()
             postcode_input.send_keys(postcode)
 
+            # Wait for the address dropdown to appear
             wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".relation_path_type_ahead_results_holder li")))
             
+            # Select the correct address from the list
             address_xpath = f"//li[@aria-label and contains(@aria-label, '{user_paon}')]"
             matching_address = wait.until(EC.element_to_be_clickable((By.XPATH, address_xpath)))
             matching_address.click()
+            
+            # This short sleep was in the working version and may help the page's JS to update
             time.sleep(2)
 
+            # Click the continue button
             continue_button = wait.until(
                 EC.element_to_be_clickable((By.CSS_SELECTOR, "input.btn.bg-green[value='Select address and continue']"))
             )
             continue_button.click()
 
-            # --- NEW ROBUST WAIT CONDITION ---
-            # Instead of just waiting for the container, we now wait for the container
-            # AND for it to contain the text "Next collection". This ensures the JS has finished rendering.
+            # --- ROBUST WAIT CONDITION ---
+            # This is the correct way to wait. It waits for the container element to be present
+            # AND for it to contain the key text "Next collection", ensuring the data has loaded.
             wait.until(EC.text_to_be_present_in_element(
                 (By.CSS_SELECTOR, "div.listing_template_record"), "Next collection"
             ))
@@ -70,9 +76,6 @@ class CouncilClass(AbstractGetBinDataClass):
             
             collections = set()
             bin_records = soup.select("div.listing_template_record")
-            
-            # Diagnostic print to show in logs how many records were found
-            print(f"Found {len(bin_records)} bin records to process.")
 
             for record in bin_records:
                 try:
@@ -100,9 +103,25 @@ class CouncilClass(AbstractGetBinDataClass):
                 except Exception:
                     continue
             
+            # --- CRITICAL DEBUGGING BLOCK ---
+            # If the collections set is still empty, something went wrong.
+            # This block saves the page source and a screenshot for analysis.
             if not collections:
-                raise ValueError("No bin collection data could be extracted from the page")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = f"nhdc_error_{timestamp}.png"
+                html_path = f"nhdc_error_{timestamp}.html"
+                
+                # In Home Assistant, these files will save to your /config/ directory
+                print(f"ERROR: No bin data found. Saving screenshot to {screenshot_path} and HTML to {html_path} for debugging.")
+                
+                if driver:
+                    driver.save_screenshot(screenshot_path)
+                    with open(html_path, "w", encoding="utf-8") as f:
+                        f.write(driver.page_source)
+                
+                raise ValueError("No bin collection data could be extracted from the page. Check the saved error files.")
 
+            # --- Process and return data ---
             for bin_type, collection_date in collections:
                  data["bins"].append({
                     "type": bin_type,
@@ -116,6 +135,7 @@ class CouncilClass(AbstractGetBinDataClass):
             return data
 
         except Exception as e:
+            # Re-raise the exception to be handled by the calling code
             raise
         finally:
             if driver:
