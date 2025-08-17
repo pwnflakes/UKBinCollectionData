@@ -68,11 +68,14 @@ class CouncilClass(AbstractGetBinDataClass):
 
             for record in bin_records:
                 try:
-                    bin_type_element = record.select_one("td:first-child strong")
+                    bin_type_element = record.find("p")
 
                     if not bin_type_element:
                         continue
                     bin_type = bin_type_element.get_text(strip=True)
+
+                    if "bin" in bin_type.lower() or "caddy" in bin_type.lower():
+                        continue
 
                     date_text = None
                     p_tags = record.select("p")
@@ -125,5 +128,3 @@ class CouncilClass(AbstractGetBinDataClass):
             if driver:
                 print("Closing webdriver.")
                 driver.quit()
-
-  
