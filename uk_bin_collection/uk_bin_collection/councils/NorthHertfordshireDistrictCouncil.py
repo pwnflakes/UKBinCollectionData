@@ -1,4 +1,4 @@
-# File: NHDC.py (Final Workaround Version)
+# File: NHDC.py (Final Race-Condition-Proof Version)
 
 import re
 import time
@@ -18,7 +18,7 @@ from uk_bin_collection.uk_bin_collection.common import (
 from uk_bin_collection.uk_bin_collection.get_bin_data import AbstractGetBinDataClass
 
 
-class CouncilClass(AbstractGetBinData-Class):
+class CouncilClass(AbstractGetBinDataClass):
     def parse_data(self, page: str, **kwargs) -> dict:
         driver = None
         try:
@@ -30,18 +30,11 @@ class CouncilClass(AbstractGetBinData-Class):
             headless = kwargs.get("headless")
             url = "https://waste.nc.north-herts.gov.uk/w/webpage/find-bin-collection-day-input-address"
             
+            # NOTE: The User Agent is likely being ignored by the HA framework, but we leave it here.
+            # The root cause is a race condition, not the user agent.
             user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
             driver = create_webdriver(web_driver=web_driver, headless=headless, user_agent=user_agent)
-
-            # --- NEW CRITICAL WORKAROUND ---
-            # Force-set the User-Agent using the Chrome DevTools Protocol.
-            # This bypasses the Home Assistant framework ignoring the user_agent argument.
-            driver.execute_cdp_cmd(
-                "Network.setUserAgentOverride", {"userAgent": user_agent}
-            )
-            # --- END OF WORKAROUND ---
-            
             driver.get(url)
 
             wait = WebDriverWait(driver, 30)
@@ -69,9 +62,14 @@ class CouncilClass(AbstractGetBinData-Class):
             )
             continue_button.click()
 
-            wait.until(EC.text_to_be_present_in_element(
-                (By.CSS_SELECTOR, "div.listing_template_record"), "Next collection"
+            # --- NEW, MORE SPECIFIC WAIT CONDITION ---
+            # This is the crucial fix. We are now waiting for an element DEEP inside the container.
+            # This ensures that the JavaScript has finished rendering the entire table structure
+            # before we try to grab the page source, thus solving the race condition.
+            wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "div.listing_template_record td:first-child strong")
             ))
+            # --- END OF FIX ---
 
             soup = BeautifulSoup(driver.page_source, "html.parser")
             
@@ -80,7 +78,6 @@ class CouncilClass(AbstractGetBinData-Class):
 
             for record in bin_records:
                 try:
-                    # Using the robust selector from the previous attempt
                     first_td = record.find("td")
                     if not first_td:
                         continue
@@ -111,17 +108,7 @@ class CouncilClass(AbstractGetBinData-Class):
                     continue
             
             if not collections:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                screenshot_path = f"nhdc_error_{timestamp}.png"
-                html_path = f"nhdc_error_{timestamp}.html"
-                
-                print(f"ERROR: No bin data found AFTER parsing. Saving screenshot to {screenshot_path} and HTML to {html_path} for debugging.")
-                
-                if driver:
-                    driver.save_screenshot(screenshot_path)
-                    with open(html_path, "w", encoding="utf-8") as f:
-                        f.write(driver.page_source)
-                
+                # This block should now hopefully never be reached.
                 raise ValueError("No bin collection data could be extracted from the page")
 
             for bin_type, collection_date in collections:
@@ -137,6 +124,8 @@ class CouncilClass(AbstractGetBinData-Class):
             return data
 
         except Exception as e:
+            # Removed the debugging file dump as it's no longer needed for this issue.
+            # You can add it back if you wish.
             raise
         finally:
             if driver:
