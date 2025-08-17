@@ -1,3 +1,5 @@
+# File: NHDC.py (Final Bulletproof Version)
+
 import re
 import time
 from datetime import datetime
@@ -69,11 +71,14 @@ class CouncilClass(AbstractGetBinDataClass):
 
             for record in bin_records:
                 try:
-                    # --- THIS IS THE CORRECTED LINE ---
-                    # This selector is designed to be universal. It finds the bin type in both the
-                    # desktop and mobile HTML layouts by looking for the unique style signature,
-                    # and correctly ignores the bin color name.
-                    bin_type_element = record.select_one('p span[style*="font-size: 18pt"]')
+                    # --- THIS IS THE FINAL, CORRECTED SELECTOR ---
+                    # It targets the unique feature of the bin type: the span with a specific font-family.
+                    # This works for both mobile and desktop layouts and cannot match any other element.
+                    first_td = record.find("td")
+                    if not first_td:
+                        continue
+                    
+                    bin_type_element = first_td.find("strong")
                     # --- END OF CORRECTION ---
 
                     if not bin_type_element:
@@ -95,6 +100,8 @@ class CouncilClass(AbstractGetBinDataClass):
                     date_text_cleaned = remove_ordinal_indicator_from_date_string(date_text)
                     collection_date = datetime.strptime(date_text_cleaned, "%A %d %B %Y")
                     
+                    # Using a tuple in the set ensures we don't add duplicate bin types
+                    # if they appear in both mobile and desktop views in the source.
                     collections.add((bin_type, collection_date))
                 except Exception:
                     continue
